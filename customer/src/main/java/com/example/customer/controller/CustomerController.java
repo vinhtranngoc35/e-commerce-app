@@ -1,4 +1,4 @@
-package com.example.customer.endpoint;
+package com.example.customer.controller;
 
 import com.example.customer.dto.request.CustomerCreateRequest;
 import com.example.customer.dto.request.CustomerUpdateRequest;
