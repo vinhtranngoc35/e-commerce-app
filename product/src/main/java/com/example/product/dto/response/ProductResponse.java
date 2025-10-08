@@ -7,5 +7,5 @@ public record ProductResponse(
         Long id,
         String name,
         Double price,
-        Integer stock
+        Integer quantity
 ) {}

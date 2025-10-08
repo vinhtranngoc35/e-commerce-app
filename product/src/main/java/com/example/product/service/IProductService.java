@@ -1,5 +1,6 @@
 package com.example.product.service;
 
+import com.example.product.dto.ProductAvailabilityResponse;
 import com.example.product.dto.request.ProductCreateRequest;
 import com.example.product.dto.request.ProductQuantityCheckRequest;
 import com.example.product.dto.response.ProductResponse;
@@ -16,5 +17,5 @@ public interface IProductService {
     Optional<ProductResponse> findById(Long id);
     ProductResponse update(Long id, ProductUpdateRequest request);
     void deleteById(Long id);
-    boolean isAvailable(List<ProductQuantityCheckRequest> items);
+    List<ProductAvailabilityResponse> checkQuantities(List<ProductQuantityCheckRequest> items);
 }

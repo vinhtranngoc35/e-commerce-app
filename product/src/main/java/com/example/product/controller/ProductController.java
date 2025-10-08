@@ -1,5 +1,6 @@
 package com.example.product.controller;
 
+import com.example.product.dto.ProductAvailabilityResponse;
 import com.example.product.dto.request.ProductCreateRequest;
 import com.example.product.dto.request.ProductQuantityCheckRequest;
 import com.example.product.dto.request.ProductUpdateRequest;
@@ -57,12 +58,7 @@ public class ProductController {
     }
 
     @PostMapping("/check-availability")
-    public ResponseEntity<Boolean> checkAvailability(@Valid @RequestBody List<ProductQuantityCheckRequest> items) {
-        boolean isAvailable = productService.isAvailable(items);
-        if (isAvailable) {
-            return ResponseEntity.ok(true);
-        } else {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(false);
-        }
+    public ResponseEntity<List<ProductAvailabilityResponse>> checkAvailability(@Valid @RequestBody List<ProductQuantityCheckRequest> items) {
+        return ResponseEntity.ok().body(productService.checkQuantities(items));
     }
 }

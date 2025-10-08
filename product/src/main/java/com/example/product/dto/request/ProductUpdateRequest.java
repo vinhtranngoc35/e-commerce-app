@@ -14,7 +14,7 @@ public record ProductUpdateRequest(
         @Positive(message = "Price must be positive")
         Double price,
 
-        @NotNull(message = "Stock is required")
-        @Positive(message = "Stock must be positive")
-        Integer stock
+        @NotNull(message = "Quantity is required")
+        @Positive(message = "Quantity must be positive")
+        Integer quantity
 ) {}
