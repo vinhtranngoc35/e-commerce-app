@@ -31,7 +31,6 @@ public class ProductCacheSyncConsumer {
             Long id = after.path("id").asLong();
             Integer quantity = after.path("quantity").isMissingNode() ? null : after.path("quantity").asInt();
 
-            // chỉ cập nhật khi là update hoặc insert
             String operation = node.path("payload").path("op").asText();
             if ("u".equals(operation) || "c".equals(operation)) {
                 redisTemplate.opsForValue().set(CACHE_PREFIX + id, quantity);

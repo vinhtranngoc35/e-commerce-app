@@ -17,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +29,9 @@ public class ProductService implements IProductService {
     private final ModelMapper modelMapper;
     private final RedisTemplate<String, Integer> redisTemplate;
     private static final String CACHE_PREFIX = "product:qty:";
+    private static final int NOT_FOUND_SENTINEL = -1;
+    private static final Duration POSITIVE_TTL = Duration.ofMinutes(10);
+    private static final Duration NEGATIVE_TTL = Duration.ofSeconds(45);
 
     @Override
     public ProductResponse create(ProductCreateRequest request) {
@@ -65,62 +70,99 @@ public class ProductService implements IProductService {
     @Override
     @Transactional(readOnly = true)
     public List<ProductAvailabilityResponse> checkQuantities(List<ProductQuantityCheckRequest> requests) {
-        // Step 1: Extract product IDs from requests
+        // Step 1: Extract product IDs and deduplicate while keeping stable iteration order
         List<Long> productIds = requests.stream()
                 .map(ProductQuantityCheckRequest::productId)
                 .toList();
+        Set<Long> uniqueIds = new LinkedHashSet<>(productIds);
 
-        // Step 2: Try to get quantities from Redis cache first
-        Map<Long, Integer> cacheData = getQuantitiesFromCache(productIds);
+        // Step 2: Try to get quantities from Redis cache first (batched)
+        Map<Long, Integer> cacheData = new HashMap<>(uniqueIds.size());
+        List<Long> missingIds = new ArrayList<>();
+        try {
+            cacheData.putAll(getQuantitiesFromCache(new ArrayList<>(uniqueIds)));
 
-        // Step 3: Identify products that are not in cache
-        List<Long> missingIds = productIds.stream()
-                .filter(id -> !cacheData.containsKey(id))
-                .toList();
+            // Step 3: Identify products that are not in cache
+            for (Long id : uniqueIds) {
+                if (!cacheData.containsKey(id)) {
+                    missingIds.add(id);
+                }
+            }
+        } catch (RuntimeException ex) {
+            // Redis problem: proceed without cache
+            missingIds.clear();
+            missingIds.addAll(uniqueIds);
+            cacheData.clear();
+        }
 
-        // Step 4: Fetch missing data from database and update cache
+        // Step 4: Fetch missing data from database and update cache with TTLs and sentinel
         if (!missingIds.isEmpty()) {
             List<ProductQuantityCheckRequest> dbDataList = productRepository.findQuantitiesByIds(missingIds);
-
-            // Cache the actual data from database
-            dbDataList.forEach(data ->
-                    redisTemplate.opsForValue().set(CACHE_PREFIX + data.productId(), data.quantity())
-            );
 
             // Add database data to our cache map
             dbDataList.forEach(data -> cacheData.put(data.productId(), data.quantity()));
 
-            // For IDs that don't exist in DB, cache null to avoid repeated DB queries
+            // Determine IDs not found in DB
             Set<Long> foundIds = dbDataList.stream()
                     .map(ProductQuantityCheckRequest::productId)
                     .collect(Collectors.toSet());
 
-            missingIds.stream()
-                    .filter(id -> !foundIds.contains(id))
-                    .forEach(id -> {
-                        redisTemplate.opsForValue().set(CACHE_PREFIX + id, null);
-                        cacheData.put(id, null);
-                    });
+            // Negative cache for not-found
+            for (Long id : missingIds) {
+                if (!foundIds.contains(id)) {
+                    cacheData.put(id, NOT_FOUND_SENTINEL);
+                }
+            }
+
+            // Best-effort cache writes with TTLs
+            try {
+                for (Map.Entry<Long, Integer> entry : cacheData.entrySet()) {
+                    Long id = entry.getKey();
+                    Integer qty = entry.getValue();
+                    if (qty == null) {
+                        continue;
+                    }
+                    if (Objects.equals(qty, NOT_FOUND_SENTINEL)) {
+                        redisTemplate.opsForValue().set(CACHE_PREFIX + id, qty, NEGATIVE_TTL.toSeconds(), TimeUnit.SECONDS);
+                    } else {
+                        redisTemplate.opsForValue().set(CACHE_PREFIX + id, qty, POSITIVE_TTL.toSeconds(), TimeUnit.SECONDS);
+                    }
+                }
+            } catch (RuntimeException ex) {
+                // Ignore cache write errors
+            }
         }
 
-        // Step 5: Build response with availability check
+        // Step 5: Build response with availability check, keeping original request order
         return requests.stream()
                 .map(req -> {
-                    Integer availableQty = cacheData.get(req.productId());
-                    boolean available = availableQty != null && availableQty >= req.quantity();
+                    Integer cached = cacheData.get(req.productId());
+                    int availableQty = (cached == null || Objects.equals(cached, NOT_FOUND_SENTINEL)) ? 0 : cached;
+                    boolean available = availableQty >= req.quantity();
                     return new ProductAvailabilityResponse(req.productId(), available, availableQty);
                 })
                 .toList();
     }
 
     private Map<Long, Integer> getQuantitiesFromCache(List<Long> productIds) {
-        Map<Long, Integer> cacheData = new HashMap<>();
-        productIds.forEach(id -> {
-            Integer cachedQty = redisTemplate.opsForValue().get(CACHE_PREFIX + id);
-            if (cachedQty != null) {
-                cacheData.put(id, cachedQty);
+        if (productIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<String> keys = productIds.stream()
+                .map(id -> CACHE_PREFIX + id)
+                .toList();
+
+        List<Integer> values = redisTemplate.opsForValue().multiGet(keys);
+        Map<Long, Integer> cacheData = new HashMap<>(productIds.size());
+        if (values == null) {
+            return cacheData;
+        }
+        for (int i = 0; i < productIds.size(); i++) {
+            Integer value = values.get(i);
+            if (value != null) {
+                cacheData.put(productIds.get(i), value);
             }
-        });
+        }
         return cacheData;
     }
 }

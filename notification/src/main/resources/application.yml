@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: notification
+  cloud:
+    config:
+      enabled: true
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: notification-service
+      auto-offset-reset: earliest
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "*"
+
+eureka:
+  client:
+    serviceUrl:
+      defaultZone: http://localhost:8761/eureka/
+
+server:
+  port: 0
+
+order:
+  topics:
+    created: ORDER_CREATED
+    rejected: ORDER_REJECTED
+    payment-completed: PAYMENT_COMPLETED
+    payment-failed: PAYMENT_FAILED
+
+
